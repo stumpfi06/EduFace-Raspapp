@@ -2,14 +2,15 @@ import express from "express";
 import type { Response } from "express";
 import cors from "cors";
 import { Server as SocketIo, Socket } from "socket.io";
-import http from "http";
+import https from "https";
 import { neuerAnwesenheitsEintrag, anwesenheitAustragen } from "./util/firebase.queries";
 import { collection, getDocs, updateDoc } from "firebase/firestore";
 import { db } from "./util/firebase.config"; // Add this line
 import cron from "node-cron"; // Add this line
 
 const app = express();
-const server = http.createServer(app);
+
+const server = https.createServer(app);
 const io = new SocketIo(server, {
     cors: {
         origin: "http://localhost:5174",
@@ -25,20 +26,8 @@ const PORT = 8000;
 // Speichert die aktuelle Socket-Verbindung
 let currentSocket: Socket | null = null;
 
-const delay = (ms: number, cancelToken: { cancelled: boolean }) => new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-        if (cancelToken.cancelled) {
-            reject(new Error('Process cancelled'));
-        } else {
-            resolve();
-        }
-    }, ms);
-
-    if (cancelToken.cancelled) {
-        clearTimeout(timeout);
-        reject(new Error('Process cancelled'));
-    }
-});
+const FACE_API_IP = '172.20.10.2';
+const FACE_API_PORT = 5000;
 
 io.on('connection', (socket) => {
     console.log('New client connected');
@@ -64,7 +53,6 @@ io.on('connection', (socket) => {
 
             try {
                 let response;
-                await delay(1000, cancelToken); // Wait for 10 seconds with cancellation support
                 if (useNfc) {
                     response = await getNfc();
                     console.log("used nfc");
@@ -142,17 +130,17 @@ app.post("/upload", async (res: Response) => {
     }
 });
 
-server.listen(4000, () => {
+server.listen(4000, "172.20.10.5", () => {
     console.log('WebSocket Server läuft auf Port 4000');
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Server läuft auf http://localhost:${PORT}`);
+    console.log(`🚀 Server läuft auf http://172.20.10.5:${PORT}`);
 });
 
 const addFace = async () => {
     try {
-        const response = await fetch('http://127.0.0.1:8088/face/upload', {
+        const response = await fetch(`http://${FACE_API_IP}:${FACE_API_PORT}/face/upload`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -173,7 +161,7 @@ const addFace = async () => {
 
 const getFace = async () => {
     try {
-        const response = await fetch('http://127.0.0.1:8088/face/query', {
+        const response = await fetch(`http://${FACE_API_IP}:${FACE_API_PORT}/face/query`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -191,9 +179,10 @@ const getFace = async () => {
         return null;
     }
 };
+
 const getNfc = async () => {
     try {
-        const response = await fetch('http://127.0.0.1:8088/nfc', {
+        const response = await fetch(`http://${FACE_API_IP}:${FACE_API_PORT}/nfc`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'

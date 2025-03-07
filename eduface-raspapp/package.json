@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "type-check": "vue-tsc --build --force",
@@ -15,6 +15,7 @@
     "@types/axios": "^0.14.4",
     "@types/node": "^22.10.7",
     "@types/prettier": "^3.0.0",
+    "@vitejs/plugin-basic-ssl": "^2.0.0",
     "@vue/eslint-config-prettier": "^10.2.0",
     "@vue/eslint-config-typescript": "^14.4.0",
     "axios": "^1.7.9",

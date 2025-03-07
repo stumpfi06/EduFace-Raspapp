@@ -1,7 +1,7 @@
 <template>
   <div class="scanning-face-view">
     <div class="camera-section">
-      <Camera :resolution="{ width: 819.2, height: 600 }" autoplay facing-mode="user"/>
+      <img ref="videoStream" alt="Webcam Stream" class="border rounded-lg shadow-lg w-[640px] h-[480px]" />
     </div>
     <div class="info-section">
 
@@ -12,24 +12,31 @@
     </div>
   </div>
 </template>
-<script lang="ts">
-import { defineComponent, ref } from "vue";
+<script setup lang="ts">
+import {  ref, onMounted } from "vue";
 import socket from "../util/socket";
 import { useRouter } from "vue-router";
-import Camera from "simple-vue-camera";
 
 
+
+const videoStream = ref<HTMLImageElement | null>(null);
+
+onMounted(() => {
+  const ws = new WebSocket("ws://localhost:8765"); // IP-Adresse ggf. anpassen
+  ws.binaryType = "blob";
+
+  ws.onmessage = (event) => {
+    const blob = new Blob([event.data], { type: "image/jpeg" });
+    const url = URL.createObjectURL(blob);
+    if (videoStream.value) {
+      videoStream.value.src = url;
+    }
+  };
+});
     
-export default defineComponent({ 
-  components: {
-    Camera,
-  },
 
-  name: "ScanningFaceView",
-  setup() {
+
     const router = useRouter();
-    const message = ref<string | null>(null);
-    const isLoading = ref(false);
 
     socket.on("message", (data) => {
       if(data === "upload"){
@@ -47,13 +54,5 @@ export default defineComponent({
       socket.send("nfc");
       router.push('/nfc');
     }
-    return {
-        handleNFC,
-        handleAbbrechen,
-      message,
-      isLoading,
-    };
-  },
-});
 </script>
 <style scoped src="../style.css"></style>
