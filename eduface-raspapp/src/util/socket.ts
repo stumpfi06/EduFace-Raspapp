@@ -1,7 +1,7 @@
 import { io } from "socket.io-client";
 
 // Establish WebSocket connection
-const socket = io("http://172.20.10.5:4000", {
+const socket = io("127.0.0.1:4000", {
   transports: ["websocket"],
 });
 

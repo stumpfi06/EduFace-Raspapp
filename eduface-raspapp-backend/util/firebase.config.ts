@@ -1,20 +1,14 @@
-import { initializeApp } from "firebase/app"
-import { getFirestore } from "firebase/firestore" 
+import admin from 'firebase-admin';
 import { config } from "dotenv";
 config();
 
-const firebaseConfig = {
-  apiKey: process.env.API_KEY,
-  authDomain: process.env.AUTH_DOMAIN,
-  databaseURL: process.env.DATABASE_URL,
-  projectId: process.env.PROJECT_ID,
-  storageBucket: process.env.STORAGE_BUCKET,
-  messagingSenderId: process.env.MESSAGING_SENDER_ID,
-  appId: process.env.APP_ID,
-  measurementId: process.env.MEASUREMENT_ID
-};
-console.log(firebaseConfig);
-const app = initializeApp(firebaseConfig)
-const db = getFirestore(app)
+// Initialize Firebase Admin SDK with service account credentials
+const serviceAccount = require('../eduface-cb182-firebase-adminsdk-zzez5-e6bb06ed6a.json'); // Replace with the actual path to your service account key file
 
-export { db };
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+const db = admin.firestore();
+
+export { db, admin };

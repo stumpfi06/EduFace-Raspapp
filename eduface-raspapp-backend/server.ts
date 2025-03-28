@@ -1,18 +1,17 @@
-import express from "express";
-import type { Response } from "express";
+import express, { Response } from "express";
 import cors from "cors";
 import { Server as SocketIo, Socket } from "socket.io";
 import http from "http";
-import { neuerAnwesenheitsEintrag, anwesenheitAustragen } from "./util/firebase.queries";
-import { collection, getDocs, updateDoc } from "firebase/firestore";
-import { db } from "./util/firebase.config"; // Add this line
-import cron from "node-cron"; // Add this line
-import * as dotenv from 'dotenv'; // Import dotenv to load environment variables
+import { neuerAnwesenheitsEintragAdmin, anwesenheitAustragenAdmin } from "./util/firebase.queries";
+import admin from "firebase-admin";
+import { db } from "./util/firebase.config";
+import cron from "node-cron";
+import * as dotenv from 'dotenv';
+import readline from 'readline/promises';
 
-dotenv.config(); // Load environment variables from .env file
+dotenv.config();
 
 const app = express();
-
 const server = http.createServer(app);
 const io = new SocketIo(server, {
     cors: {
@@ -24,29 +23,31 @@ const io = new SocketIo(server, {
 app.use(express.json());
 app.use(cors());
 
-const PORT = 8000;
-const FACE_PORT = 5000;
+let PORT: number;
+let FACE_PORT: number;
+let WEBSOCKET_PORT: number;
+let SERVER_IP: string;
+let FACE_SERVER_IP: string;
 
 // Speichert die aktuelle Socket-Verbindung
 let currentSocket: Socket | null = null;
 
 // Store socket connections by room and their associated IPs
-let roomSockets: { [key: string]: { sockets: Socket[], ip: string } } = {}; // Mapping rooms to sockets and IPs
+let roomSockets: { [key: string]: { sockets: Socket[], ip: string } } = {};
 
 io.on('connection', (socket) => {
     const clientIp = socket.handshake.address as string;
     console.log(`Client connected from IP: ${clientIp}`);
-    
+
     socket.on('roomId', (roomId: string) => {
-        // Extract the IPv4 address from the full address
-        const match = clientIp.match(/(\d+\.\d+\.\d+\.\d+)/); // This regex matches the IPv4 format
-        const cleanIp = match ? match[0] : clientIp; // If no match, fall back to the original IP
-        
+        const match = clientIp.match(/(\d+\.\d+\.\d+\.\d+)/);
+        const cleanIp = match ? match[0] : clientIp;
+
         if (!roomSockets[roomId]) {
             roomSockets[roomId] = { sockets: [], ip: cleanIp };
         }
         roomSockets[roomId].sockets.push(socket);
-        roomSockets[roomId].ip = cleanIp; // Set the room IP when a client joins
+        roomSockets[roomId].ip = cleanIp;
         console.log(`Client connected to room: ${roomId} from IP: ${cleanIp}`);
     });
 
@@ -83,13 +84,11 @@ const handleKommenOrGehen = async (socket: Socket, message: string) => {
 
     try {
         let response;
-        const roomId = Array.from(socket.rooms).find((id) => id !== socket.id); // Get the room ID by excluding socket's own ID
-        console.log('Room ID:', roomId); // Added log to check roomId
-        if (!roomId) {
-            console.error('No room ID found for the socket'); // Added error handling
-        }
-        const roomIp = roomId ? roomSockets[roomId]?.ip : 'localhost'; // Get the room's associated IP
-        console.log(`Room IP for room ${roomId}: ${roomIp}`); // Added log to check roomIp
+        // Verwende socket.id als Fallback, falls keine andere Raum-ID gefunden wird.
+        const roomId = Array.from(socket.rooms).find((id) => id !== socket.id) || socket.id;
+        console.log('Room ID:', roomId);
+        const roomIp = roomSockets[roomId]?.ip || 'localhost'; // Provide a default
+        console.log(`Room IP for room ${roomId}: ${roomIp}`);
 
         if (useNfc) {
             response = await getNfc(roomIp);
@@ -104,12 +103,15 @@ const handleKommenOrGehen = async (socket: Socket, message: string) => {
         if (response && !cancelToken.cancelled) {
             console.log(message);
             await handleAttendance(socket, message, response);
+        } else if (cancelToken.cancelled) {
+            socket.emit('message', 'cancelled');
         }
-    } catch (error) {
+    } catch (error: any) { // Explicitly type error as any
         if (error instanceof Error && error.message === 'Process cancelled') {
             console.log('Process was cancelled');
         } else {
             console.error('Error adding timestamp:', error);
+            socket.emit('message', `error:${error.message}`); // Send error to client
         }
     }
 };
@@ -120,7 +122,7 @@ const handleCancelMessage = (socket: Socket, cancelMessage: string, cancelToken:
             clearTimeout(cancelToken.timeout);
         }
         cancelToken.cancelled = true;
-        
+
         if (reject) {
             reject(new Error('Process cancelled'));
         }
@@ -133,13 +135,18 @@ const handleCancelMessage = (socket: Socket, cancelMessage: string, cancelToken:
 };
 
 const handleAttendance = async (socket: Socket, message: string, response: any) => {
-    if (message === 'kommen') {
-        console.log(message);
-        await neuerAnwesenheitsEintrag(response);
-        socket.emit('message', 'finished-Scanning');
-    } else {
-        await anwesenheitAustragen(response);
-        socket.emit('message', 'finished-Scanning');
+    try {
+        if (message === 'kommen') {
+            console.log(message);
+            await neuerAnwesenheitsEintragAdmin(response);
+            socket.emit('message', 'finished-Scanning');
+        } else {
+            await anwesenheitAustragenAdmin(response);
+            socket.emit('message', 'finished-Scanning');
+        }
+    } catch (error: any) {
+        console.error("Error in handleAttendance:", error);
+        socket.emit('message', `error:${error.message}`);
     }
 };
 
@@ -149,7 +156,6 @@ const handleDisconnect = (socket: Socket) => {
         currentSocket = null;
     }
 
-    // Log which room this client was in when disconnected
     for (const roomId in roomSockets) {
         if (roomSockets[roomId].sockets.includes(socket)) {
             roomSockets[roomId].sockets = roomSockets[roomId].sockets.filter(s => s !== socket);
@@ -170,44 +176,49 @@ const waitForMessage = (socket: Socket, expectedMessage: string): Promise<void> 
             if (message === expectedMessage) {
                 resolve();
             } else {
-                reject(new Error('Unexpected message received'));
+                reject(new Error(`Unexpected message received: ${message}`));
             }
         });
     });
 };
 
-app.post("/upload", async (res: Response) => {
+app.post("/upload", async (req, res: Response) => { // Added req
+    console.log("Handling /upload request...");
     io.emit('message', 'upload');
+    console.log("Emitted 'upload' message to client.");
 
     try {
+        console.log("Waiting for 'upload' message from client...");
         await waitForMessage(currentSocket as Socket, 'upload');
+        console.log("'upload' message received from client.");
+
         const sid = await addFace();
+        console.log("addFace() returned:", sid);
+
         if (!sid) {
-            res.json({ status: "error", error: "Face not added" });
+            console.error("Face not added, sending error response.");
+            res.status(500).json({ status: "error", error: "Face not added" }); // Send 500 for server error
         } else {
+            console.log("Face added successfully, sending success response.");
             res.json({ status: "success", sid });
             io.emit('message', 'finished-upload');
+            console.log("Emitted 'finished-upload' message to client.");
         }
-    } catch (error) {
+    } catch (error: any) {
         console.error('Error adding face:', error);
-        res.json({ status: "error", error });
+        res.status(500).json({ status: "error", error: error.message || "An error occurred" }); // Send 500
     }
 });
 
-server.listen(4000, () => {
-    console.log('WebSocket Server läuft auf Port 4000');
-});
-
-app.listen(PORT, () => {
-    console.log(`🚀 Server läuft auf http://172.20.10.5:${PORT}`);
-});
-
 const addFace = async () => {
+    if (!currentSocket) {
+        throw new Error("No active socket connection");
+    }
     try {
-        // Use the non-null assertion operator here
-        const roomId = Array.from(currentSocket!.rooms).find((id) => id !== currentSocket!.id);
-        const roomIp = roomId ? roomSockets[roomId]?.ip : 'localhost'; // Get the room's associated IP
-
+        const roomId = Array.from(currentSocket.rooms).find((id) => id !== currentSocket!.id);
+        const roomIp = roomId ? roomSockets[roomId]?.ip : 'localhost';
+        console.log(`Room IP for room ${roomId}: ${roomIp}`);
+        console.log("Face PORT", FACE_PORT);
         const response = await fetch(`http://${roomIp}:${FACE_PORT}/face/upload`, {
             method: 'GET',
             headers: {
@@ -216,20 +227,23 @@ const addFace = async () => {
         });
 
         if (!response.ok) {
-            throw new Error('Network response was not ok');
+            const errorText = await response.text(); // Get the error message
+            console.error(`Error from face server: ${response.status} - ${errorText}`);
+            throw new Error(`Face server error: ${response.status} - ${errorText}`);
         }
         const data = await response.json();
-
+        if (!data.uid)
+            throw new Error(`Face server returned no uid: ${JSON.stringify(data)}`);
         return data.uid;
-    } catch (error) {
+    } catch (error: any) {
         console.error('Error adding face:', error);
-        return null;
+        throw error; // Re-throw the error to be caught in the /upload endpoint
     }
 };
 
 const getFace = async (roomIp: string) => {
     try {
-        console.log("roomip", roomIp)
+        console.log("roomip", roomIp);
         const response = await fetch(`http://${roomIp}:${FACE_PORT}/face/query`, {
             method: 'GET',
             headers: {
@@ -238,14 +252,17 @@ const getFace = async (roomIp: string) => {
         });
 
         if (!response.ok) {
-            throw new Error('Network response was not ok');
+            const errorText = await response.text();
+            console.error(`Error from face server: ${response.status} - ${errorText}`);
+            throw new Error(`Face server error: ${response.status} - ${errorText}`);
         }
         const data = await response.json();
-
+        if (!data.uid)
+            throw new Error(`Face server returned no uid: ${JSON.stringify(data)}`);
         return data.uid;
-    } catch (error) {
-        console.error('Error adding face:', error);
-        return null;
+    } catch (error: any) {
+        console.error('Error getting face:', error);
+        throw error;
     }
 };
 
@@ -259,27 +276,82 @@ const getNfc = async (roomIp: string) => {
         });
 
         if (!response.ok) {
-            throw new Error('Network response was not ok');
+            const errorText = await response.text();
+            console.error(`Error from NFC server: ${response.status} - ${errorText}`);
+            throw new Error(`NFC server error: ${response.status} - ${errorText}`);
         }
         const data = await response.json();
-
+        if (!data.uid)
+            throw new Error(`NFC server returned no uid: ${JSON.stringify(data)}`);
         return data.uid;
-    } catch (error) {
-        console.error('Error adding face:', error);
-        return null;
+    } catch (error: any) {
+        console.error('Error getting NFC:', error);
+        throw error;
     }
 };
 
-// Schedule a task to run at 16:05 every Monday to Friday
 cron.schedule('5 16 * * 1-5', async () => {
     console.log('Running scheduled task at 16:05 Monday to Friday');
-    const querySnapshot = await getDocs(collection(db, 'EduFace', 'Schulzentrum-ybbs', 'Anwesenheiten'));
-    querySnapshot.forEach(async (doc) => {
-        if (!doc.data().leftAt) {
-            console.log("Updating document:", doc.id);
-            await updateDoc(doc.ref, {
-                leftAt: new Date(),
-            });
-        }
-    });
+    try {
+        const querySnapshot = await db
+            .collection("EduFace")
+            .doc("Schulzentrum-ybbs")
+            .collection("Anwesenheiten")
+            .get();
+
+        querySnapshot.forEach(async (doc) => {
+            if (!doc.data().leftAt) {
+                console.log("Updating document:", doc.id);
+                try {
+                    await doc.ref.update({
+                        leftAt: admin.firestore.Timestamp.fromDate(new Date()),
+                    });
+                } catch (updateError) {
+                    console.error("Error updating document:", doc.id, updateError);
+                    // Consider whether to continue processing other documents
+                }
+            }
+        });
+    } catch (error) {
+        console.error("Error in cron job:", error);
+    }
 });
+
+async function main() {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await rl.question('Run in test mode? (yes/no): ');
+    rl.close();
+
+    if (answer.toLowerCase() === 'yes') {
+        PORT = 8000;
+        FACE_PORT = 8088;
+        WEBSOCKET_PORT = 4000;
+        SERVER_IP = 'localhost';
+        FACE_SERVER_IP = 'localhost';
+
+        server.listen(WEBSOCKET_PORT, () => {
+            console.log(`WebSocket Server läuft im Testmodus auf Port ${WEBSOCKET_PORT}`);
+        });
+
+        app.listen(PORT, () => {
+            console.log(`🚀 Test Server läuft auf http://${SERVER_IP}:${PORT}`);
+        });
+    } else {
+        PORT = 8000;
+        FACE_PORT = 5000;
+        WEBSOCKET_PORT = 4000;
+        SERVER_IP = '172.20.10.5'; // Your original IP
+        FACE_SERVER_IP = 'localhost'; // Assuming your face server runs locally
+
+        server.listen(WEBSOCKET_PORT, () => {
+            console.log(`WebSocket Server läuft auf Port ${WEBSOCKET_PORT}`);
+        });
+
+        app.listen(PORT, () => {
+            console.log(`🚀 Server läuft auf http://${SERVER_IP}:${PORT}`);
+        });
+    }
+}
+
+main();
+

@@ -1,77 +1,72 @@
-import { db } from "./firebase.config";
-import { collection, addDoc, updateDoc, getDocs, query, where } from "firebase/firestore";
+import admin from "firebase-admin";
+import { db } from "./firebase.config"; // Ensure Firebase Admin SDK is initialized
+import { handleAttendanceChange } from "./firebase.abwesenheit"; // Import the function
 
-const timetable = {
-1 : { start: '07:35', end: '08:15' },
-2: { start: '08:15', end: '08:55' },
-3: { start: '09:10', end: '09:50' },
-4: { start: '09:50', end: '10:30' },
-5: { start: '10:35', end: '11:15' },
-6: { start: '11:15', end: '11:55' },
-7: { start: '11:55', end: '12:45' },    
-8: { start: '12:45', end: '13:35' },
-9: { start: '13:35', end: '14:25' },
-10: { start: '14:25', end: '15:15' },
-11: { start: '15:15', end: '16:05' }
-};
-
-const neuerAnwesenheitsEintrag = async (sid: string) => {
-    console.log("AnwesenheitsEintrag:", sid);
+const neuerAnwesenheitsEintragAdmin = async (sid: string) => {
+    console.log("Admin - AnwesenheitsEintrag:", sid);
 
     if (!sid || typeof sid !== "string") {
-        console.error("Invalid sid:", sid);
+        console.error("Admin - Invalid sid:", sid);
+        console.log(typeof sid);
         return;
     }
 
     const data = {
         sid,
-        arrivedAt: new Date(),  
+        arrivedAt: admin.firestore.Timestamp.fromDate(new Date()),
+        leftAt: null,
     };
 
-    console.log("Attempting to write:", JSON.stringify(data));
+    console.log("Admin - Attempting to write:", JSON.stringify(data));
 
     try {
-        const docRef = await addDoc(collection(db, 'EduFace', 'Schulzentrum-ybbs', 'Anwesenheiten'), data);
-        console.log("Document written with ID:", docRef.id);   
+        const docRef = await db
+            .collection("EduFace")
+            .doc("Schulzentrum-ybbs")
+            .collection("Anwesenheiten")
+            .add(data);
+
+        console.log("Admin - Document written with ID:", docRef.id);
+
+        // 🟢 Call absence handling function after attendance entry
+        await handleAttendanceChange("Schulzentrum-ybbs", docRef.id, sid, data.arrivedAt, null);
     } catch (error) {
-        console.error("Error writing document:", error);
+        console.error("Admin - Error writing document:", error);
     }
 };
 
-const anwesenheitAustragen = async (sid:string) => {
-    console.log("Anwesenheit austragen:", sid);
+const anwesenheitAustragenAdmin = async (sid: string) => {
+    console.log("Admin - Anwesenheit austragen:", sid);
 
     if (!sid || typeof sid !== "string") {
-        console.error("Invalid sid:", sid);
+        console.error("Admin - Invalid sid:", sid);
         return;
     }
 
-    const querySnapshot = await getDocs(collection(db, 'EduFace', 'Schulzentrum-ybbs', 'Anwesenheiten'));
-    querySnapshot.forEach((doc) => {
-        if (doc.data().sid === sid && !doc.data().leftAt) {
-            console.log("Updating document:", doc.id);
-            updateDoc(doc.ref, {
-                leftAt: new Date(),  
-            });
-        }
-    });
-};
+    const anwesenheitenRef = db
+        .collection("EduFace")
+        .doc("Schulzentrum-ybbs")
+        .collection("Anwesenheiten");
 
-const AbwesenheitErstellen = async (sid:string) => {
-    // Query Stundenplan for documents where kid equals sid
-    const stundenplanQuery = query(
-         collection(db, 'EduFace', 'Schulzentrum-ybbs', 'Stundenplan'),
-         where('kid', '==', sid)
-    );
-    const snapshot = await getDocs(stundenplanQuery);
-    if (snapshot.empty) {
-        console.log("No Stundenplan found for kid:", sid);
-        return;
+    const querySnapshot = await anwesenheitenRef
+        .where("sid", "==", sid)
+        .where("leftAt", "==", null)
+        .get();
+    
+    if (!querySnapshot.empty) {
+        querySnapshot.forEach(async (doc) => {
+            console.log("Admin - Updating document:", doc.id);
+
+            const leftAt = admin.firestore.Timestamp.fromDate(new Date());
+
+            await doc.ref.update({ leftAt });
+
+            // 🟢 Call absence handling function after updating leftAt
+            await handleAttendanceChange("Schulzentrum-ybbs", doc.id, sid, null, leftAt);
+        });
+    } else {
+        console.log(`Admin - No active attendance record found for sid: ${sid}`);
     }
-    snapshot.forEach(doc => {
-         console.log("Stundenplan found:", doc.id, doc.data());
-    });
-    // ...further processing as needed...
 };
 
-export { neuerAnwesenheitsEintrag, anwesenheitAustragen };
+export { neuerAnwesenheitsEintragAdmin, anwesenheitAustragenAdmin };
