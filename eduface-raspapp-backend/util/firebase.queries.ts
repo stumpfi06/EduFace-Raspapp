@@ -29,7 +29,7 @@ const neuerAnwesenheitsEintragAdmin = async (sid: string) => {
         console.log("Admin - Document written with ID:", docRef.id);
 
         // 🟢 Call absence handling function after attendance entry
-        await handleAttendanceChange("Schulzentrum-ybbs", docRef.id, sid, data.arrivedAt, null);
+        await handleAttendanceChange("Schulzentrum-ybbs", sid, false);
     } catch (error) {
         console.error("Admin - Error writing document:", error);
     }
@@ -62,7 +62,7 @@ const anwesenheitAustragenAdmin = async (sid: string) => {
             await doc.ref.update({ leftAt });
 
             // 🟢 Call absence handling function after updating leftAt
-            await handleAttendanceChange("Schulzentrum-ybbs", doc.id, sid, null, leftAt);
+            await handleAttendanceChange("Schulzentrum-ybbs", sid, false);
         });
     } else {
         console.log(`Admin - No active attendance record found for sid: ${sid}`);

@@ -8,6 +8,7 @@ import { db } from "./util/firebase.config";
 import cron from "node-cron";
 import * as dotenv from 'dotenv';
 import readline from 'readline/promises';
+import { checkDailyAbsences } from "./util/firebase.abwesenheit";
 
 dotenv.config();
 
@@ -316,7 +317,15 @@ cron.schedule('5 16 * * 1-5', async () => {
         console.error("Error in cron job:", error);
     }
 });
-
+cron.schedule('35 7 * * 1-5', async () => {
+    console.log('Running checkDailyAbsences at 07:35 Monday to Friday');
+    try {
+        await checkDailyAbsences("Schulzentrum-ybbs"); // Schul-ID hartcodiert, ggf. anpassen
+        console.log('checkDailyAbsences execution completed.');
+    } catch (error) {
+        console.error('Error during checkDailyAbsences execution:', error);
+    }
+});
 async function main() {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     const answer = await rl.question('Run in test mode? (yes/no): ');
